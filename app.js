@@ -3,11 +3,41 @@ const express = require('express');
 const path = require('path');
 const cookieParser = require('cookie-parser');
 const logger = require('morgan');
+const helmet = require('helmet');
+const session = require('express-session');
+const passport = require('passport');
+// 教材と違い環境変数を使用したいため追加
+const dotenv = require('dotenv');
+dotenv.config();
+
+const GitHubStrategy = require('passport-github2').Strategy;
+const { GITHUB_CLIENT_ID } = process.env;
+const { GITHUB_CLIENT_SECRET } = process.env;
+
+passport.serializeUser((user, done) =>{
+  done(null, user);
+});
+passport.deserializeUser((obj, done) => {
+  done(null, obj);
+});
+
+passport.use(new GitHubStrategy({
+  clientID: GITHUB_CLIENT_ID,
+  clientSecret: GITHUB_CLIENT_SECRET,
+  callback: 'http://localhost:8000/auth/github/callback'
+  },
+  (accessToken, refreshToken, profile, done) => {
+    process.nextTick(() => {
+      return done(null, profile)
+    });
+  }));
 
 const indexRouter = require('./routes/index');
-const usersRouter = require('./routes/users');
+const loginRouter = require('./routes/login');
+const logoutRouter = require('./routes/logout');
 
 const app = express();
+app.use(helmet());
 
 // view engine setup
 app.set('views', path.join(__dirname, 'views'));
@@ -19,9 +49,25 @@ app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 
+app.use(session({secret: process.env.SESSION_SECRET, resave: false, saveUninitialized: false}));
+app.use(passport.initialize());
+app.use(passport.session());
 app.use('/', indexRouter);
-app.use('/users', usersRouter);
+app.use('/login', loginRouter);
+app.use('/logout', logoutRouter);
 
+app.get(
+  '/auth/github', 
+  passport.authenticate('github', {scope: ['user: email']})
+  );
+
+app.get(
+  '/auth/github/callback',
+  passport.authenticate('github', {failureRedirect: '/login'}),
+  (req, res) => {
+    res.redirect('/');
+  }
+)
 // catch 404 and forward to error handler
 app.use(function(req, res, next) {
   next(createError(404));
