@@ -50,9 +50,7 @@ describe('/schedules', () => {
     passportStub.logout();
     passportStub.uninstall();
 
-    // テストで作成したデータを削除
-    await prisma.candidate.deleteMany({ where:{scheduleId} });
-    await prisma.schedule.delete({ where: { scheduleId } });
+    await deleteScheduleAggregate(scheduleId);
   });
 
   test('予定が作成でき、表示できる', async() => {
@@ -87,4 +85,50 @@ describe('/schedules', () => {
         .expect(/テスト候補3/)
         .expect(200);
   });
-})
+});
+
+describe('/schedules/:scheduleId/users/:userId/candidates/:candidateId', () => {
+  let scheduleId = '';
+  beforeAll(() => {
+    passportStub.install(app);
+    passportStub.login({ id: 0, username: 'testuser' });
+  });
+
+  afterAll(async () => {
+    passportStub.logout();
+    passportStub.uninstall();
+    await deleteScheduleAggregate(scheduleId);
+  });
+
+  test('出欠が更新できる', async () => {
+    const userId = 0, username = 'testuser';
+    const data = { userId, username };
+    await prisma.user.upsert({
+      where: { userId },
+      create: data,
+      update: data
+    });
+    const res = await request(app)
+      .post('/schedules')
+      .send({ scheduleName: 'テスト出欠更新予定1', memo: 'テスト出欠更新メモ1', candidates: 'テスト出欠更新候補1' });
+    const createdSchedulePath = res.headers.location;
+    scheduleId = createdSchedulePath.split('/schedules/')[1];
+    const candidate = await prisma.candidate.findFirst({ where: { scheduleId } });
+    // 更新がされることをテスト
+    await request(app)
+      .post(`/schedules/${scheduleId}/users/${userId}/candidates/${candidate.candidateId}`)
+      .send({ availability: 2 }) // 出席に更新
+      .expect('{"status":"OK","availability":2}');
+      const availabilities = await prisma.availability.findMany({ where: { scheduleId } });
+      // 所得できた出欠の件数が一件であること
+      expect(availabilities.length).toBe(1);
+      expect(availabilities[0].availability).toBe(2);
+  });
+});
+
+
+async function deleteScheduleAggregate(scheduleId) {
+  await prisma.availability.deleteMany({ where: { scheduleId } });
+  await prisma.candidate.deleteMany({ where: { scheduleId } });
+  await prisma.schedule.delete({ where: { scheduleId } });
+}

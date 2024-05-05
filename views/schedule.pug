@@ -13,6 +13,11 @@ block content
     each candidate in candidates 
       tr 
         th #{candidate.candidateName} 
-        each user in users 
-          td 
-            button 欠席
+        each user in users
+          - const availability = availabilityMapMap.get(user.userId).get(candidate.candidateId);
+          - const availabilityLabels = ['欠', '?', '出'];
+          td
+            if user.isSelf 
+              button #{availabilityLabels[availability]} 
+            else 
+              p #{availabilityLabels[availability]}
