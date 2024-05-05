@@ -126,9 +126,51 @@ describe('/schedules/:scheduleId/users/:userId/candidates/:candidateId', () => {
   });
 });
 
+describe('/schedules/:scheduleId/users/:userId/comments', () => {
+  let scheduleId = '';
+  beforeAll(() => {
+    passportStub.install(app);
+    passportStub.login({ id: 0, username: 'testuser' });
+  });
+
+  afterAll(async () => {
+    passportStub.logout();
+    passportStub.uninstall();
+    await deleteScheduleAggregate(scheduleId);
+  });
+
+  test('コメントが更新できる', async() => {
+    const userId = 0, username = 'testuser';
+    const data = { userId, username };
+    await prisma.user.upsert({
+      where: {userId},
+      create: data,
+      update: data
+    });
+    const res = await request(app)
+      .post('/schedules')
+      .send({
+        scheduleName: 'テストコメント更新予定1',
+        memo: 'テストコメント更新メモ1',
+        candidates: 'テストコメント更新候補1'
+      });
+    const createSchedulePath = res.headers.location;
+    scheduleId = createSchedulePath.split('/schedules/')[1];
+    // 更新がされることをテスト
+    await request(app)
+      .post(`/schedules/${scheduleId}/users/${userId}/comments`)
+      .send({ comment: 'testcomment' })
+      .expect('{"status":"OK","comment":"testcomment"}')
+    const comments = await prisma.comment.findMany({ where: {scheduleId} });
+    expect(comments.length).toBe(1);
+    expect(comments[0].comment).toBe('testcomment')
+  })
+});
+
 
 async function deleteScheduleAggregate(scheduleId) {
   await prisma.availability.deleteMany({ where: { scheduleId } });
   await prisma.candidate.deleteMany({ where: { scheduleId } });
+  await prisma.comment.deleteMany({ where: { scheduleId } });
   await prisma.schedule.delete({ where: { scheduleId } });
 }

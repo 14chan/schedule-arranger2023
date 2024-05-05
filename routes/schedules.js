@@ -96,12 +96,22 @@ router.get('/:scheduleId', authenticationEnsurer, async(req, res, next) => {
       });
     });
 
+    // コメントの取得
+    const comments = await prisma.comment.findMany({
+      where: { scheduleId: schedule.scheduleId }
+    });
+    const commentMap = new Map(); // key: userId, value: comment
+    comments.forEach((comment) => {
+      commentMap.set(comment.userId, comment.comment);
+    });
+
     res.render('schedule', {
       user: req.user,
       schedule: schedule,
       candidates: candidates,
       users: users,
-      availabilityMapMap: availabilityMapMap
+      availabilityMapMap: availabilityMapMap,
+      commentMap: commentMap
     });
   } else {
     const err = new Error('指定された予定は見つかりません');
