@@ -1,38 +1,32 @@
+'use strict';
 const express = require('express');
 const router = express.Router();
 const authenticationEnsurer = require('./authentication-ensurer');
 const { v4: uuidv4 } = require('uuid');
 const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient({log: ['query']});
+const { defaultMaxListeners } = require('supertest/lib/test');
+const prisma = new PrismaClient({ log: [ 'query' ] });
 
-router.get('/new', authenticationEnsurer ,(req, res, next) => {
-  res.render('new', { title: 'Express', user: req.user});
+router.get('/new', authenticationEnsurer, (req, res, next) => {
+  res.render('new', { user: req.user });
 });
 
-router.post('/',authenticationEnsurer, async(req, res, next) => {
+router.post('/', authenticationEnsurer, async (req, res, next) => {
   const scheduleId = uuidv4();
   const updatedAt = new Date();
   const schedule = await prisma.schedule.create({
     data: {
       scheduleId: scheduleId,
-      scheduleName: req.body.scheduleName.slice(0, 255) || '(名称未設定)',
+      scheduleName: req.body.scheduleName.slice(0, 255) || '（名称未設定）',
       memo: req.body.memo,
       createdBy: parseInt(req.user.id),
       updatedAt: updatedAt
     }
   });
-  const candidateNames = req.body.candidates.split('\n').map((s) => s.trim()).filter((s) => s !== '');
-  const candidates = candidateNames.map((c) => ({
-    candidateName: c,
-    scheduleId: schedule.scheduleId
-  }));
-  await prisma.candidate.createMany({
-    data: candidates
-  });
-  res.redirect('/schedules/' + schedule.scheduleId);
+  await createCandidatesAndRedirect(parseCandidateNames(req), schedule.scheduleId, res);
 });
 
-router.get('/:scheduleId', authenticationEnsurer, async(req, res, next) => {
+router.get('/:scheduleId', authenticationEnsurer, async (req, res, next) => {
   const schedule = await prisma.schedule.findUnique({
     where: { scheduleId: req.params.scheduleId },
     include: {
@@ -44,15 +38,15 @@ router.get('/:scheduleId', authenticationEnsurer, async(req, res, next) => {
       }
     }
   });
-  if(schedule) {
+  if (schedule) {
     const candidates = await prisma.candidate.findMany({
       where: { scheduleId: schedule.scheduleId },
       orderBy: { candidateId: 'asc' }
     });
     // データベースからその予定の全ての出欠を取得する
     const availabilities = await prisma.availability.findMany({
-      where: { scheduleId: schedule.scheduleId},
-      orderBy:{ candidateId: 'asc' },
+      where: { scheduleId: schedule.scheduleId },
+      orderBy: { candidateId: 'asc' },
       include: {
         user: {
           select: {
@@ -62,20 +56,20 @@ router.get('/:scheduleId', authenticationEnsurer, async(req, res, next) => {
         }
       }
     });
-    // 出欠MapMap を作成する
-    const availabilityMapMap = new Map() // key userId, value: Map(key: candidateId, value: availability)
+    // 出欠 MapMap を作成する
+    const availabilityMapMap = new Map(); // key: userId, value: Map(key: candidateId, value: availability)
     availabilities.forEach((a) => {
       const map = availabilityMapMap.get(a.user.userId) || new Map();
-      map.set(a.candidateId, a.abailability);
+      map.set(a.candidateId, a.availability);
       availabilityMapMap.set(a.user.userId, map);
     });
 
     // 閲覧ユーザと出欠に紐づくユーザからユーザ Map を作る
     const userMap = new Map(); // key: userId, value: User
     userMap.set(parseInt(req.user.id), {
-      isSelf: true,
-      userId: parseInt(req.user.id),
-      username: req.user.username
+        isSelf: true,
+        userId: parseInt(req.user.id),
+        username: req.user.username
     });
     availabilities.forEach((a) => {
       userMap.set(a.user.userId, {
@@ -96,11 +90,11 @@ router.get('/:scheduleId', authenticationEnsurer, async(req, res, next) => {
       });
     });
 
-    // コメントの取得
+    // コメント取得
     const comments = await prisma.comment.findMany({
       where: { scheduleId: schedule.scheduleId }
     });
-    const commentMap = new Map(); // key: userId, value: comment
+    const commentMap = new Map();  // key: userId, value: comment
     comments.forEach((comment) => {
       commentMap.set(comment.userId, comment.comment);
     });
@@ -119,6 +113,96 @@ router.get('/:scheduleId', authenticationEnsurer, async(req, res, next) => {
     next(err);
   }
 });
+
+router.get('/:scheduleId/edit', authenticationEnsurer, async (req, res, next) => {
+  const schedule = await prisma.schedule.findUnique({
+    where: { scheduleId: req.params.scheduleId }
+  });
+  if (isMine(req, schedule)) { // 作成者のみが編集フォームを開ける
+    const candidates = await prisma.candidate.findMany({
+      where: { scheduleId: schedule.scheduleId },
+      orderBy: { candidateId: 'asc' }
+    });
+    res.render('edit', {
+      user: req.user,
+      schedule: schedule,
+      candidates: candidates
+    });
+  } else {
+    const err = new Error('指定された予定がない、または、予定する権限がありません');
+    err.status = 404;
+    next(err);
+  }
+});
+
+function isMine(req, schedule) {
+  return schedule && parseInt(schedule.createdBy) === parseInt(req.user.id);
+}
+
+router.post('/:scheduleId/update', authenticationEnsurer, async(req, res, next) => {
+  let schedule = await prisma.schedule.findUnique({
+    where : {scheduleId: req.params.scheduleId}
+  });
+  if (isMine(req, schedule)) {
+    const updatedAt = new Date();
+    schedule = await prisma.schedule.update({
+      where: { scheduleId: schedule.scheduleId },
+      data: {
+        scheduleName: req.body.scheduleName.slice(0, 255) || '(名称未設定)',
+        memo: req.body.memo,
+        updatedAt: updatedAt
+      }
+    });
+    // 候補が追加されているかチェック
+    const candidateNames = parseCandidateNames(req);
+    if (candidateNames.length) {
+      createCandidatesAndRedirect(candidateNames, schedule.scheduleId, res);
+    } else {
+      const err = new Error('指定された予定がない、または、編集する権限がありません');
+      err.status = 404;
+      next(err);
+    }
+  }
+})
+
+router.post('/:scheduleId/delete', authenticationEnsurer, async (req, res, next) => {
+  const schedule = await prisma.schedule.findUnique({
+    where: { scheduleId: req.params.scheduleId }
+  });
+  if (isMine(req, schedule)) {
+    await deleteScheduleAggregate(schedule.scheduleId);
+    res.redirect('/');
+  } else {
+    const err = new Error('指定された予定がない、または、削除する権限がありません');
+    err.status = 404;
+    next(err);
+  }
+});
+
+async function deleteScheduleAggregate(scheduleId) {
+  await prisma.availability.deleteMany({ where: { scheduleId } });
+  await prisma.candidate.deleteMany({ where: { scheduleId } });
+  await prisma.comment.deleteMany({ where: { scheduleId } });
+  await prisma.schedule.delete({ where: { scheduleId } });
+}
+
+router.deleteScheduleAggregate = deleteScheduleAggregate;
+
+
+async function createCandidatesAndRedirect(candidateNames, scheduleId, res) {
+  const candidates = candidateNames.map((c) => ({
+    candidateName: c,
+    scheduleId: scheduleId
+  }));
+  await prisma.candidate.createMany({
+    data: candidates
+  });
+  res.redirect('/schedules/' + scheduleId);
+}
+
+function parseCandidateNames(req) {
+  return req.body.candidates.split('\n').map((s) => s.trim()).filter((s) => s !== '');
+}
 
 
 module.exports = router;

@@ -2,6 +2,7 @@
 const request = require('supertest');
 const app = require('../app');
 const passportStub = require('passport-stub');
+const { deleteScheduleAggregate } = require('../routes/schedules');
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient({log: ['query']});
  
@@ -167,10 +168,103 @@ describe('/schedules/:scheduleId/users/:userId/comments', () => {
   })
 });
 
+describe('/schedules/:scheduleId/update', () => {
+  let scheduleId = '';
+  beforeAll(() => {
+    passportStub.install(app);
+    passportStub.login({ id: 0, username: 'testuser' });
+  });
 
-async function deleteScheduleAggregate(scheduleId) {
-  await prisma.availability.deleteMany({ where: { scheduleId } });
-  await prisma.candidate.deleteMany({ where: { scheduleId } });
-  await prisma.comment.deleteMany({ where: { scheduleId } });
-  await prisma.schedule.delete({ where: { scheduleId } });
-}
+  afterAll(async () => {
+    passportStub.logout();
+    passportStub.uninstall();
+    await deleteScheduleAggregate(scheduleId);
+  });
+
+  test('予定が更新でき、候補が追加できる', async () => {
+    const userId = 0, username = 'testuser';
+    const data = { userId, username };
+    await prisma.user.upsert({
+      where: { userId },
+      create: data,
+      update: data
+    });
+    const res = await request(app)
+      .post('/schedules')
+      .send({ scheduleName: 'テスト更新予定1', memo: 'テスト更新メモ1', candidates: 'テスト更新候補1' });
+    const createdSchedulePath = res.headers.location;
+    scheduleId = createdSchedulePath.split('/schedules/')[1];
+    // 更新がされることをテスト
+    await request(app)
+      .post(`/schedules/${scheduleId}/update`)
+      .send({ scheduleName: 'テスト更新予定2', memo: 'テスト更新メモ2', candidates: 'テスト更新候補2' });
+    const schedule = await prisma.schedule.findUnique({ where: { scheduleId } });
+    expect(schedule.scheduleName).toBe('テスト更新予定2');
+    expect(schedule.memo).toBe('テスト更新メモ2');
+    const candidates = await prisma.candidate.findMany({
+      where: { scheduleId },
+      orderBy: { candidateId: 'asc' }
+    });
+    expect(candidates.length).toBe(2);
+    expect(candidates[0].candidateName).toBe('テスト更新候補1');
+    expect(candidates[1].candidateName).toBe('テスト更新候補2');
+  });
+});
+
+describe('/schedules/:scheduleId/delete', () => {
+  beforeAll(() => {
+    passportStub.install(app);
+    passportStub.login({ id: 0, username: 'testuser' });
+  });
+
+  afterAll(() => {
+    passportStub.logout();
+    passportStub.uninstall();
+  });
+
+  test('予定に関連する全ての情報が削除できる', async () => {
+    const userId = 0, username = 'testuser';
+    const data = { userId, username };
+    await prisma.user.upsert({
+      where: { userId },
+      create: data,
+      update: data
+    });
+    const res = await request(app)
+      .post('/schedules')
+      .send({ scheduleName: 'テスト削除予定1', memo: 'テスト削除メモ1', candidates: 'テスト削除候補1' });
+    const createdSchedulePath = res.headers.location;
+    const scheduleId = createdSchedulePath.split('/schedules/')[1];
+
+    // 出欠作成
+    const candidate = await prisma.candidate.findFirst({ where: { scheduleId } });
+    await request(app)
+      .post(`/schedules/${scheduleId}/users/${userId}/candidates/${candidate.candidateId}`)
+      .send({ availability: 2 }); // 出席に更新
+
+    // コメント作成
+    await request(app)
+      .post(`/schedules/${scheduleId}/users/${userId}/comments`)
+      .send({ comment: 'testcomment' })
+      .expect('{"status":"OK","comment":"testcomment"}');
+
+    // 削除
+    await request(app)
+      .post(`/schedules/${scheduleId}/delete`);
+
+    // テスト
+    const availabilities = await prisma.availability.findMany({ where: { scheduleId } });
+    // TODO テストを実装;
+    expect(availabilities.length).toBe(0);
+    const candidates = await prisma.candidate.findMany({ where: { scheduleId } });
+    // TODO テストを実装
+    expect(candidates.length).toBe(0);
+    const comments = await prisma.comment.findMany({ where: { scheduleId } });
+    // TODO テストを実装
+    expect(comments.length).toBe(0);
+    const schedule = await prisma.schedule.findUnique({ where: { scheduleId } });
+    // TODO テストを実装
+    expect(!schedule).toBe(true);
+  });
+});
+
