@@ -1,8 +1,24 @@
 doctype html
 html(lang='ja')
   head
-    title= title
-    link(rel='stylesheet', href='/stylesheets/style.css')
+    title= 予定調整くん
+    meta(charset="utf-8")
+    link(name="viewport" content="width=device-width, initial-scale=1")
+    link(rel='stylesheet', href='/stylesheets/bundle.css')
   body
-    block content
+    nav.navbar.navbar-expand-md.navbar-light.bg-light 
+      div.container-fluid
+        a.navbar-brand(href="/") 予定調整くん
+        button.navbar-toggler(type="button" data-bs-toggle="collapse" data-bs-target="#navbarResponsive" aria-controls="navbarResponsive" aria-expanded="false" aria-label="Toggle navigation")
+          span.navbar-toggler-icon
+        div#navbarResponsive.collapse.navbar-collapse
+          ul.navbar-nav.ms-auto 
+            if user 
+              li.nav-item 
+                a(href="/logout").nav-link #{user.username} をログアウト
+            else 
+              li.nav-item 
+                a(href="login").nav-link ログイン 
+    div.container
+      block content
     script(src="/javascripts/bundle.js")

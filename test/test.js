@@ -20,7 +20,7 @@ describe('/login', () => {
     await request(app)
       .get('/login')
       .expect('Content-Type', 'text/html; charset=utf-8')
-      .expect(/<a href="\/auth\/github"/)
+      .expect(/<a class="btn btn-primary my-3" href="\/auth\/github"/)
       .expect(200);
   });
 
