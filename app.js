@@ -6,6 +6,7 @@ const logger = require('morgan');
 const helmet = require('helmet');
 const session = require('express-session');
 const passport = require('passport');
+const csurf = require('tiny-csrf');
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient({log: ['query']});
 // 教材と違い環境変数を使用したいため追加
@@ -63,12 +64,19 @@ app.set('view engine', 'pug');
 app.use(logger('dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
-app.use(cookieParser());
+app.use(cookieParser('nyobi_signed_cookies'));
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.use(session({secret: process.env.SESSION_SECRET, resave: false, saveUninitialized: false}));
 app.use(passport.initialize());
 app.use(passport.session());
+
+app.use(
+  csurf('nyobikosecretsecret9876543212345',
+  ['POST'],
+[/.*\/(candidates|comments).*/i]
+  )
+)
 app.use('/', indexRouter);
 app.use('/login', loginRouter);
 app.use('/logout', logoutRouter);
@@ -85,7 +93,14 @@ app.get(
   '/auth/github/callback',
   passport.authenticate('github', {failureRedirect: '/login'}),
   (req, res) => {
-    res.redirect('/');
+    const loginFrom = req.cookies.loginFrom;
+    // オープンリダイレクタ脆弱性対策
+    if (loginFrom && loginFrom.startsWith('/')) {
+      res.clearCookie('loginFrom');
+      res.redirect(loginFrom);
+    } else {
+      res.redirect('/');
+    }
   }
 )
 // catch 404 and forward to error handler
